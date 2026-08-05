@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - Add `DataTpl::lastChild` deprecation notice in Python binding
+- Add `pinocchio/algorithm/mimic-projection.hpp`, providing inverse dynamics derivatives for models
+  containing mimic joints. `MimicProjectionTpl` stores the constant coupling map `G` between a
+  mimicking model and its expanded counterpart, and `computeRNEADerivativesProjected` returns
+  `G^T (dtau/dq_e) G`, `G^T (dtau/dv_e) G` and `G^T M_e G` at the reduced dimension
 
 ## [4.1.0] - 2026-07-07
 
