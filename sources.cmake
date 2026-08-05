@@ -39,6 +39,7 @@ set(${PROJECT_NAME}_CORE_PUBLIC_HEADERS
     ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/kinematics-derivatives.hpp
     ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/kinematics.hpp
     ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/loop-constrained-aba.hpp
+    ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/mimic-projection.hpp
     ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/model.hpp
     ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/preconditioner-base.hpp
     ${PROJECT_SOURCE_DIR}/include/pinocchio/algorithm/proximal.hpp
@@ -252,6 +253,7 @@ set(${PROJECT_NAME}_CORE_PRIVATE_HEADERS
     ${PROJECT_SOURCE_DIR}/include/pinocchio/src/math/gram-schmidt-orthonormalisation.hxx
     ${PROJECT_SOURCE_DIR}/include/pinocchio/src/algorithm/constrained-dynamics.hxx
     ${PROJECT_SOURCE_DIR}/include/pinocchio/src/math/block-diagonal-matrix-inverse.hxx
+    ${PROJECT_SOURCE_DIR}/include/pinocchio/src/algorithm/mimic-projection.hxx
     ${PROJECT_SOURCE_DIR}/include/pinocchio/src/algorithm/model.hxx
     ${PROJECT_SOURCE_DIR}/include/pinocchio/src/algorithm/rnea-derivatives.hxx
     ${PROJECT_SOURCE_DIR}/include/pinocchio/src/utils/check.hxx

@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   examples visualized with Viser: `examples/constant-length-constraint-kinematics.py` (constrained
   forward kinematics of a four-bar linkage) and `examples/constant-length-constraint-3d.py`
   (constrained forward dynamics of a spherical pendulum)
+- Add `pinocchio/algorithm/mimic-projection.hpp`, providing inverse dynamics derivatives for models
+  containing mimic joints. `MimicProjectionTpl` stores the constant coupling map `G` between a
+  mimicking model and its expanded counterpart, and `computeRNEADerivativesProjected` returns
+  `G^T (dtau/dq_e) G`, `G^T (dtau/dv_e) G` and `G^T M_e G` at the reduced dimension
 
 ### Fixed
 - Reject missing joint frames during model reduction instead of reading past the frame vector ([#2960](https://github.com/stack-of-tasks/pinocchio/pull/2960))
