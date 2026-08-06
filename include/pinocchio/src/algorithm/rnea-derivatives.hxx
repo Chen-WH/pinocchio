@@ -295,8 +295,10 @@ namespace pinocchio
         else
           data.oMi[i] = data.liMi[i];
 
+        // A mimicking joint has no acceleration of its own: it reads the one of the joint it
+        // mimics, the scaling factor being already baked into jdata.S().
         data.a[i] =
-          jdata.S() * jmodel.jointVelocitySelector(a) + jdata.c() + (data.v[i] ^ jdata.v());
+          jdata.S() * jmodel.JointMappedVelocitySelector(a) + jdata.c() + (data.v[i] ^ jdata.v());
         if (parent > 0)
         {
           data.a[i] += data.liMi[i].actInv(data.a[parent]);
@@ -310,14 +312,16 @@ namespace pinocchio
         data.oh[i] = data.oYcrb[i] * ov;
         data.of[i] = data.oYcrb[i] * oa_gf + ov.cross(data.oh[i]);
 
-        typedef
-          typename SizeDepType<JointModel::NV>::template ColsReturn<typename Data::Matrix6x>::Type
-            ColsBlock;
-        ColsBlock J_cols = jmodel.jointCols(data.J);
-        ColsBlock dJ_cols = jmodel.jointCols(data.dJ);
-        ColsBlock dVdq_cols = jmodel.jointCols(data.dVdq);
-        ColsBlock dAdq_cols = jmodel.jointCols(data.dAdq);
-        ColsBlock dAdv_cols = jmodel.jointCols(data.dAdv);
+        // The motion and force sets are laid out on the extended (mimic free) tangent space, where
+        // the columns of a subtree are contiguous. They coincide with the joint columns as soon as
+        // the model holds no mimicking joint.
+        typedef typename SizeDepType<JointModel::NVExtended>::template ColsReturn<
+          typename Data::Matrix6x>::Type ColsBlock;
+        ColsBlock J_cols = jmodel.jointExtendedModelCols(data.J);
+        ColsBlock dJ_cols = jmodel.jointExtendedModelCols(data.dJ);
+        ColsBlock dVdq_cols = jmodel.jointExtendedModelCols(data.dVdq);
+        ColsBlock dAdq_cols = jmodel.jointExtendedModelCols(data.dAdq);
+        ColsBlock dAdv_cols = jmodel.jointExtendedModelCols(data.dAdv);
 
         J_cols = data.oMi[i].act(jdata.S());
         motionSet::motionAction(ov, J_cols, dJ_cols);
@@ -372,6 +376,8 @@ namespace pinocchio
     {
       typedef ModelTpl<Scalar, Options, JointCollectionTpl> Model;
       typedef DataTpl<Scalar, Options, JointCollectionTpl> Data;
+      typedef typename Model::JointIndex JointIndex;
+      typedef typename Data::Matrix6x Matrix6x;
 
       typedef boost::fusion::
         vector<const Model &, Data &, const MatrixType1 &, const MatrixType2 &, const MatrixType3 &>
@@ -386,42 +392,47 @@ namespace pinocchio
         const Eigen::MatrixBase<MatrixType2> & rnea_partial_dv,
         const Eigen::MatrixBase<MatrixType3> & rnea_partial_da)
       {
-        typedef typename Model::JointIndex JointIndex;
-        typedef typename Data::Matrix6x Matrix6x;
-
         const JointIndex i = jmodel.id();
         const JointIndex parent = model.parents[i];
 
-        typedef typename SizeDepType<JointModel::NV>::template ColsReturn<Matrix6x>::Type ColsBlock;
+        typedef typename SizeDepType<JointModel::NVExtended>::template ColsReturn<Matrix6x>::Type
+          ColsBlock;
 
         Matrix6x & dYtJ = data.Fcrb[0];
-        ColsBlock J_cols = jmodel.jointCols(data.J);
-        ColsBlock dVdq_cols = jmodel.jointCols(data.dVdq);
-        ColsBlock dAdq_cols = jmodel.jointCols(data.dAdq);
-        ColsBlock dAdv_cols = jmodel.jointCols(data.dAdv);
-        ColsBlock dFdq_cols = jmodel.jointCols(data.dFdq);
-        ColsBlock dFdv_cols = jmodel.jointCols(data.dFdv);
-        ColsBlock dFda_cols = jmodel.jointCols(data.dFda); // Also equals to Ag_cols
-        ColsBlock dYtJ_cols = jmodel.jointCols(dYtJ);
+        ColsBlock J_cols = jmodel.jointExtendedModelCols(data.J);
+        ColsBlock dVdq_cols = jmodel.jointExtendedModelCols(data.dVdq);
+        ColsBlock dAdq_cols = jmodel.jointExtendedModelCols(data.dAdq);
+        ColsBlock dAdv_cols = jmodel.jointExtendedModelCols(data.dAdv);
+        ColsBlock dFdq_cols = jmodel.jointExtendedModelCols(data.dFdq);
+        ColsBlock dFdv_cols = jmodel.jointExtendedModelCols(data.dFdv);
+        ColsBlock dFda_cols = jmodel.jointExtendedModelCols(data.dFda); // Also equals to Ag_cols
+        ColsBlock dYtJ_cols = jmodel.jointExtendedModelCols(dYtJ);
 
         MatrixType1 & rnea_partial_dq_ = PINOCCHIO_EIGEN_CONST_CAST(MatrixType1, rnea_partial_dq);
         MatrixType2 & rnea_partial_dv_ = PINOCCHIO_EIGEN_CONST_CAST(MatrixType2, rnea_partial_dv);
         MatrixType3 & rnea_partial_da_ = PINOCCHIO_EIGEN_CONST_CAST(MatrixType3, rnea_partial_da);
 
-        // tau
-        jmodel.jointVelocitySelector(data.tau).noalias() =
+        // A mimicking joint contributes to the torque of the joint it mimics and has none of its
+        // own, hence the accumulation. data.tau is zeroed by the caller.
+        jmodel.JointMappedVelocitySelector(data.tau).noalias() +=
           J_cols.transpose() * data.of[i].toVector();
 
-        const Eigen::Index nv_subtree = data.nvSubtree[i];
-        const Eigen::Index nv = jmodel.nv();
-        const Eigen::Index idx_v = jmodel.idx_v();
+        // Column ranges are expressed in the extended tangent space, where the subtree of i is
+        // contiguous. The rows and columns written in the output live in the reduced tangent
+        // space, where idx_v() of a mimicking joint is the one of the joint it mimics.
+        const Eigen::Index nv = jmodel.nvExtended();
+        const Eigen::Index idx_v = jmodel.idx_vExtended();
+        const Eigen::Index nv_subtree = nvSubtreeExtended(model, i);
         const Eigen::Index idx_v_plus = idx_v + nv;
         const Eigen::Index nv_subtree_plus = nv_subtree - nv;
+        const Eigen::Index row_v = jmodel.idx_v();
+
+        const bool has_mimic = !model.mimicking_joints.empty();
 
         // dtau/da similar to data.M
         motionSet::inertiaAction(data.oYcrb[i], J_cols, dFda_cols);
-        rnea_partial_da_.block(idx_v, idx_v, nv, nv_subtree).noalias() =
-          J_cols.transpose() * data.dFda.middleCols(idx_v, nv_subtree);
+        contractSymmetricRowBlock(
+          data, has_mimic, J_cols, data.dFda, row_v, nv, idx_v, nv_subtree, rnea_partial_da_);
 
         // dtau/dq
         if (parent > 0)
@@ -433,12 +444,12 @@ namespace pinocchio
           motionSet::inertiaAction(data.oYcrb[i], dAdq_cols, dFdq_cols);
 
         dYtJ_cols.transpose().noalias() = J_cols.transpose() * data.doYcrb[i];
-        rnea_partial_dq_.block(idx_v_plus, idx_v, nv_subtree_plus, nv).noalias() =
-          data.dFda.middleCols(idx_v_plus, nv_subtree_plus).transpose() * dAdq_cols
-          + dYtJ.middleCols(idx_v_plus, nv_subtree_plus).transpose() * dVdq_cols;
+        contractColumnBlock(
+          data, has_mimic, dAdq_cols, dVdq_cols, row_v, nv, idx_v_plus, nv_subtree_plus,
+          rnea_partial_dq_);
 
-        rnea_partial_dq_.block(idx_v, idx_v, nv, nv_subtree).noalias() =
-          J_cols.transpose() * data.dFdq.middleCols(idx_v, nv_subtree);
+        contractRowBlock(
+          data, has_mimic, J_cols, data.dFdq, row_v, nv, idx_v, nv_subtree, rnea_partial_dq_);
 
         motionSet::act<ADDTO>(J_cols, data.of[i], dFdq_cols);
 
@@ -446,18 +457,126 @@ namespace pinocchio
         dFdv_cols.noalias() = data.doYcrb[i] * J_cols;
         motionSet::inertiaAction<ADDTO>(data.oYcrb[i], dAdv_cols, dFdv_cols);
 
-        rnea_partial_dv_.block(idx_v_plus, idx_v, nv_subtree_plus, nv).noalias() =
-          data.dFda.middleCols(idx_v_plus, nv_subtree_plus).transpose() * dAdv_cols
-          + dYtJ.middleCols(idx_v_plus, nv_subtree_plus).transpose() * J_cols;
+        contractColumnBlock(
+          data, has_mimic, dAdv_cols, J_cols, row_v, nv, idx_v_plus, nv_subtree_plus,
+          rnea_partial_dv_);
 
-        rnea_partial_dv_.block(idx_v, idx_v, nv, nv_subtree).noalias() =
-          J_cols.transpose() * data.dFdv.middleCols(idx_v, nv_subtree);
+        contractRowBlock(
+          data, has_mimic, J_cols, data.dFdv, row_v, nv, idx_v, nv_subtree, rnea_partial_dv_);
 
         if (parent > 0)
         {
           data.oYcrb[parent] += data.oYcrb[i];
           data.doYcrb[parent] += data.doYcrb[i];
           data.of[parent] += data.of[i];
+        }
+      }
+
+      /// \brief Width, in the extended tangent space, of the subtree supported by joint i. The
+      /// extended indices of a subtree are contiguous, exactly as the joint indices are.
+      static Eigen::Index nvSubtreeExtended(const Model & model, const JointIndex i)
+      {
+        const JointIndex last = model.subtrees[i].back();
+        return model.idx_vExtendeds[last] + model.nvExtendeds[last] - model.idx_vExtendeds[i];
+      }
+
+      /// \brief Writes J_cols^T F over the rows of the current joint and the subtree columns.
+      ///
+      /// Without mimicking joint the extended and the reduced layouts coincide and the block is
+      /// written in one go. Otherwise each extended column is gathered onto the reduced column it
+      /// maps to, several of them possibly landing on the same one, hence the accumulation.
+      template<typename ColsBlockType, typename ForceSet, typename MatrixOut>
+      static void contractRowBlock(
+        const Data & data,
+        const bool has_mimic,
+        const ColsBlockType & J_cols,
+        const ForceSet & F,
+        const Eigen::Index row_v,
+        const Eigen::Index nv,
+        const Eigen::Index idx_v,
+        const Eigen::Index nv_subtree,
+        MatrixOut & out)
+      {
+        if (!has_mimic)
+        {
+          out.block(row_v, idx_v, nv, nv_subtree).noalias() =
+            J_cols.transpose() * F.middleCols(idx_v, nv_subtree);
+          return;
+        }
+
+        for (Eigen::Index col = idx_v; col < idx_v + nv_subtree; ++col)
+        {
+          const Eigen::Index col_v = data.idx_vExtended_to_idx_v_fromRow[(size_t)col];
+          out.col(col_v).segment(row_v, nv).noalias() += J_cols.transpose() * F.col(col);
+        }
+      }
+
+      /// \brief Same as contractRowBlock, for the symmetric joint space inertia matrix.
+      ///
+      /// Only the upper triangular part of the expanded matrix is ever computed, so a mimicking
+      /// joint and the joint it mimics, which contract onto the same reduced entry, would lose the
+      /// symmetric counterpart of their coupling. The strict subtree columns are therefore
+      /// scattered on both sides, which fills the reduced matrix entirely.
+      template<typename ColsBlockType, typename ForceSet, typename MatrixOut>
+      static void contractSymmetricRowBlock(
+        const Data & data,
+        const bool has_mimic,
+        const ColsBlockType & J_cols,
+        const ForceSet & F,
+        const Eigen::Index row_v,
+        const Eigen::Index nv,
+        const Eigen::Index idx_v,
+        const Eigen::Index nv_subtree,
+        MatrixOut & out)
+      {
+        if (!has_mimic)
+        {
+          out.block(row_v, idx_v, nv, nv_subtree).noalias() =
+            J_cols.transpose() * F.middleCols(idx_v, nv_subtree);
+          return;
+        }
+
+        // The self block is already the complete nv x nv symmetric contribution.
+        out.block(row_v, row_v, nv, nv).noalias() +=
+          J_cols.transpose() * F.middleCols(idx_v, nv);
+
+        for (Eigen::Index col = idx_v + nv; col < idx_v + nv_subtree; ++col)
+        {
+          const Eigen::Index col_v = data.idx_vExtended_to_idx_v_fromRow[(size_t)col];
+          out.col(col_v).segment(row_v, nv).noalias() += J_cols.transpose() * F.col(col);
+          out.row(col_v).segment(row_v, nv).noalias() += F.col(col).transpose() * J_cols;
+        }
+      }
+
+      /// \brief Writes dFda^T X + dYtJ^T Y over the strict subtree rows and the columns of the
+      /// current joint, gathering the extended rows onto the reduced ones when needed.
+      template<typename XType, typename YType, typename MatrixOut>
+      static void contractColumnBlock(
+        const Data & data,
+        const bool has_mimic,
+        const XType & X,
+        const YType & Y,
+        const Eigen::Index row_v,
+        const Eigen::Index nv,
+        const Eigen::Index idx_v_plus,
+        const Eigen::Index nv_subtree_plus,
+        MatrixOut & out)
+      {
+        const Matrix6x & dYtJ = data.Fcrb[0];
+
+        if (!has_mimic)
+        {
+          out.block(idx_v_plus, row_v, nv_subtree_plus, nv).noalias() =
+            data.dFda.middleCols(idx_v_plus, nv_subtree_plus).transpose() * X
+            + dYtJ.middleCols(idx_v_plus, nv_subtree_plus).transpose() * Y;
+          return;
+        }
+
+        for (Eigen::Index row = idx_v_plus; row < idx_v_plus + nv_subtree_plus; ++row)
+        {
+          const Eigen::Index row_reduced = data.idx_vExtended_to_idx_v_fromRow[(size_t)row];
+          out.row(row_reduced).segment(row_v, nv).noalias() +=
+            data.dFda.col(row).transpose() * X + dYtJ.col(row).transpose() * Y;
         }
       }
     };
@@ -498,13 +617,21 @@ namespace pinocchio
         isZero(model.gravity.angular()),
         "The gravity must be a pure force vector, no angular part");
       assert(model.check(data) && "data is not consistent with model.");
-      assert(model.check(MimicChecker()) && "Function does not support mimic joints");
 
       typedef ModelTpl<Scalar, Options, JointCollectionTpl> Model;
       typedef DataTpl<Scalar, Options, JointCollectionTpl> Data;
       typedef typename Model::JointIndex JointIndex;
 
       data.oa_gf[0] = -model.gravity;
+      // The torque of a mimicking joint is summed into the one of the joint it mimics, and so are
+      // the derivative blocks whose extended rows and columns collapse onto the same reduced ones.
+      data.tau.setZero();
+      if (!model.mimicking_joints.empty())
+      {
+        PINOCCHIO_EIGEN_CONST_CAST(MatrixType1, rnea_partial_dq).setZero();
+        PINOCCHIO_EIGEN_CONST_CAST(MatrixType2, rnea_partial_dv).setZero();
+        PINOCCHIO_EIGEN_CONST_CAST(MatrixType3, rnea_partial_da).setZero();
+      }
 
       typedef ComputeRNEADerivativesForwardStep<
         Scalar, Options, JointCollectionTpl, ConfigVectorType, TangentVectorType1,
@@ -530,7 +657,7 @@ namespace pinocchio
       }
 
       // Restore the status of dAdq_cols (remove gravity)
-      for (Eigen::Index k = 0; k < model.nv; ++k)
+      for (Eigen::Index k = 0; k < model.nvExtended; ++k)
       {
         MotionRef<typename Data::Matrix6x::ColXpr> m_in(data.J.col(k));
         MotionRef<typename Data::Matrix6x::ColXpr> m_out(data.dAdq.col(k));
@@ -579,13 +706,21 @@ namespace pinocchio
       PINOCCHIO_CHECK_ARGUMENT_SIZE(rnea_partial_da.cols(), model.nv);
       PINOCCHIO_CHECK_ARGUMENT_SIZE(rnea_partial_da.rows(), model.nv);
       assert(model.check(data) && "data is not consistent with model.");
-      assert(model.check(MimicChecker()) && "Function does not support mimic joints");
 
       typedef ModelTpl<Scalar, Options, JointCollectionTpl> Model;
       typedef DataTpl<Scalar, Options, JointCollectionTpl> Data;
       typedef typename Model::JointIndex JointIndex;
 
       data.oa_gf[0] = -model.gravity;
+      // The torque of a mimicking joint is summed into the one of the joint it mimics, and so are
+      // the derivative blocks whose extended rows and columns collapse onto the same reduced ones.
+      data.tau.setZero();
+      if (!model.mimicking_joints.empty())
+      {
+        PINOCCHIO_EIGEN_CONST_CAST(MatrixType1, rnea_partial_dq).setZero();
+        PINOCCHIO_EIGEN_CONST_CAST(MatrixType2, rnea_partial_dv).setZero();
+        PINOCCHIO_EIGEN_CONST_CAST(MatrixType3, rnea_partial_da).setZero();
+      }
 
       typedef ComputeRNEADerivativesForwardStep<
         Scalar, Options, JointCollectionTpl, ConfigVectorType, TangentVectorType1,
@@ -612,7 +747,7 @@ namespace pinocchio
       }
 
       // Restore the status of dAdq_cols (remove gravity)
-      for (Eigen::Index k = 0; k < model.nv; ++k)
+      for (Eigen::Index k = 0; k < model.nvExtended; ++k)
       {
         MotionRef<typename Data::Matrix6x::ColXpr> m_in(data.J.col(k));
         MotionRef<typename Data::Matrix6x::ColXpr> m_out(data.dAdq.col(k));

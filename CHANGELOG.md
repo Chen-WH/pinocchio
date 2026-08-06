@@ -23,12 +23,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   examples visualized with Viser: `examples/constant-length-constraint-kinematics.py` (constrained
   forward kinematics of a four-bar linkage) and `examples/constant-length-constraint-3d.py`
   (constrained forward dynamics of a spherical pendulum)
-- Add `pinocchio/algorithm/mimic-projection.hpp`, providing inverse dynamics derivatives for models
-  containing mimic joints. `MimicProjectionTpl` stores the constant coupling map `G` between a
-  mimicking model and its expanded counterpart, and `computeRNEADerivativesProjected` returns
-  `G^T (dtau/dq_e) G`, `G^T (dtau/dv_e) G` and `G^T M_e G` at the reduced dimension
+- Add mimic joint support to `computeRNEADerivatives`. The recursion now runs on the extended
+  tangent space and contracts its blocks onto the reduced one, returning
+  `G^T (dtau/dq_e) G`, `G^T (dtau/dv_e) G` and `G^T M_e G` directly at dimension `model.nv`.
+  When the model holds mimicking joints, `rnea_partial_da` is filled entirely rather than only on
+  its upper triangular part
+- Add `pinocchio/algorithm/mimic-projection.hpp`, providing the same quantities by running the
+  stock recursion on an explicitly expanded model. `MimicProjectionTpl` stores the constant
+  coupling map `G` between a mimicking model and its expanded counterpart, and
+  `computeRNEADerivativesProjected` contracts the result
+
+### Changed
+- `DataTpl::dFdq`, `dFdv`, `dFda`, `dVdq`, `dAdq`, `dAdv` and `Fcrb` are now allocated with
+  `model.nvExtended` columns instead of `model.nv`, as `DataTpl::J` already was. Both are equal
+  for a model without mimic joint
 
 ### Fixed
+- Fix `computeRNEADerivatives` restoring only the first `model.nv` columns of `DataTpl::dAdq`,
+  which is `model.nvExtended` wide
 - Reject missing joint frames during model reduction instead of reading past the frame vector ([#2960](https://github.com/stack-of-tasks/pinocchio/pull/2960))
 - Fix `addFrame` to ignore frame without inertial to preserse parent body's CoM ([#2929](https://github.com/stack-of-tasks/pinocchio/pull/2929))
 - Fix scalar-generic Python bindings ([#2939](https://github.com/stack-of-tasks/pinocchio/pull/2939))
