@@ -264,4 +264,38 @@ BOOST_AUTO_TEST_CASE(test_mimic_projection_rnea_derivatives_fext)
   }
 }
 
+BOOST_AUTO_TEST_CASE(test_mimic_projection_vs_native)
+{
+  using namespace Eigen;
+  using namespace pinocchio;
+
+  for (int i = 0; i < MimicTestCases::N_CASES; i++)
+  {
+    const MimicTestCases test_case(i);
+    const Model & model_full = test_case.model_full;
+    const Model & model_mimic = test_case.model_mimic;
+
+    const MimicProjection projection(model_full, model_mimic);
+
+    const VectorXd q = randomConfiguration(model_mimic);
+    const VectorXd v = VectorXd::Random(model_mimic.nv);
+    const VectorXd a = VectorXd::Random(model_mimic.nv);
+
+    Data data(model_full);
+    MatrixXd dtau_dq(model_mimic.nv, model_mimic.nv);
+    MatrixXd dtau_dv(model_mimic.nv, model_mimic.nv);
+    MatrixXd dtau_da(model_mimic.nv, model_mimic.nv);
+    computeRNEADerivativesProjected(
+      model_full, data, projection, q, v, a, dtau_dq, dtau_dv, dtau_da);
+
+    // The fused implementation, running the recursion directly on the mimic model, must agree.
+    Data data_mimic(model_mimic);
+    computeRNEADerivatives(model_mimic, data_mimic, q, v, a);
+
+    BOOST_CHECK(dtau_dq.isApprox(data_mimic.dtau_dq));
+    BOOST_CHECK(dtau_dv.isApprox(data_mimic.dtau_dv));
+    BOOST_CHECK(dtau_da.isApprox(data_mimic.M));
+  }
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -124,6 +124,13 @@ namespace pinocchio
   /// zeros (rnea_partial_dq.setZero(),etc).
   ///         As for pinocchio::crba, only the upper triangular part of rnea_partial_da is filled.
   ///
+  /// \note Mimic joints are supported. Their affine constraint makes the velocity map G between
+  ///       the reduced and the expanded tangent spaces constant, so the returned quantities are the
+  ///       exact contractions G^T (dtau/dq_e) G, G^T (dtau/dv_e) G and G^T M_e G, at the reduced
+  ///       dimension model.nv. When the model holds mimicking joints, rnea_partial_da is filled
+  ///       entirely rather than only on its upper triangular part, because a mimicking joint and
+  ///       the joint it mimics contract onto the same reduced entry.
+  ///
   /// \sa pinocchio::rnea
   ///
   template<
@@ -174,6 +181,13 @@ namespace pinocchio
   /// \remarks rnea_partial_dq, rnea_partial_dv and rnea_partial_da must be first initialized with
   /// zeros (rnea_partial_dq.setZero(),etc).
   ///         As for pinocchio::crba, only the upper triangular part of rnea_partial_da is filled.
+  ///
+  /// \note Mimic joints are supported. Their affine constraint makes the velocity map G between
+  ///       the reduced and the expanded tangent spaces constant, so the returned quantities are the
+  ///       exact contractions G^T (dtau/dq_e) G, G^T (dtau/dv_e) G and G^T M_e G, at the reduced
+  ///       dimension model.nv. When the model holds mimicking joints, rnea_partial_da is filled
+  ///       entirely rather than only on its upper triangular part, because a mimicking joint and
+  ///       the joint it mimics contract onto the same reduced entry.
   ///
   /// \sa pinocchio::rnea
   ///

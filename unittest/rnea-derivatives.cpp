@@ -15,6 +15,8 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/utility/binary.hpp>
 
+#include "utils/model-generator.hpp"
+
 BOOST_AUTO_TEST_SUITE(BOOST_TEST_MODULE)
 
 BOOST_AUTO_TEST_CASE(test_generalized_gravity_derivatives)
@@ -523,6 +525,144 @@ BOOST_AUTO_TEST_CASE(test_get_coriolis)
   }
 
   BOOST_CHECK(data.C.isApprox(data_ref.C));
+}
+
+BOOST_AUTO_TEST_CASE(test_rnea_derivatives_mimic)
+{
+  using namespace Eigen;
+  using namespace pinocchio;
+
+  for (int i = 0; i < MimicTestCases::N_CASES; i++)
+  {
+    const MimicTestCases test_case(i);
+    const Model & model_mimic = test_case.model_mimic;
+    const Model & model_full = test_case.model_full;
+    const MatrixXd & G = test_case.G;
+
+    const VectorXd q = randomConfiguration(model_mimic);
+    const VectorXd v = VectorXd::Random(model_mimic.nv);
+    const VectorXd a = VectorXd::Random(model_mimic.nv);
+
+    Data data_mimic(model_mimic);
+    computeRNEADerivatives(model_mimic, data_mimic, q, v, a);
+
+    // The mimic constraint being affine, the velocity map G is constant and the reduced
+    // derivatives are the two-sided contractions of the expanded ones.
+    VectorXd q_full(model_full.nq);
+    test_case.toFull(q, q_full);
+    const VectorXd v_full = G * v;
+    const VectorXd a_full = G * a;
+
+    Data data_full(model_full);
+    computeRNEADerivatives(model_full, data_full, q_full, v_full, a_full);
+    data_full.M.triangularView<StrictlyLower>() =
+      data_full.M.transpose().triangularView<StrictlyLower>();
+
+    BOOST_CHECK(data_mimic.tau.isApprox(G.transpose() * data_full.tau));
+    BOOST_CHECK(data_mimic.dtau_dq.isApprox(G.transpose() * data_full.dtau_dq * G));
+    BOOST_CHECK(data_mimic.dtau_dv.isApprox(G.transpose() * data_full.dtau_dv * G));
+    // Unlike the mimic free case, data.M is filled entirely here.
+    BOOST_CHECK(data_mimic.M.isApprox(G.transpose() * data_full.M * G));
+  }
+}
+
+BOOST_AUTO_TEST_CASE(test_rnea_derivatives_mimic_fext)
+{
+  using namespace Eigen;
+  using namespace pinocchio;
+
+  typedef std::vector<Force> ForceVector;
+
+  for (int i = 0; i < MimicTestCases::N_CASES; i++)
+  {
+    const MimicTestCases test_case(i);
+    const Model & model_mimic = test_case.model_mimic;
+    const Model & model_full = test_case.model_full;
+    const MatrixXd & G = test_case.G;
+
+    const VectorXd q = randomConfiguration(model_mimic);
+    const VectorXd v = VectorXd::Random(model_mimic.nv);
+    const VectorXd a = VectorXd::Random(model_mimic.nv);
+
+    ForceVector fext((size_t)model_mimic.njoints);
+    for (ForceVector::iterator it = fext.begin(); it != fext.end(); ++it)
+      (*it).setRandom();
+
+    Data data_mimic(model_mimic);
+    computeRNEADerivatives(model_mimic, data_mimic, q, v, a, fext);
+
+    VectorXd q_full(model_full.nq);
+    test_case.toFull(q, q_full);
+    const VectorXd v_full = G * v;
+    const VectorXd a_full = G * a;
+
+    Data data_full(model_full);
+    computeRNEADerivatives(model_full, data_full, q_full, v_full, a_full, fext);
+    data_full.M.triangularView<StrictlyLower>() =
+      data_full.M.transpose().triangularView<StrictlyLower>();
+
+    BOOST_CHECK(data_mimic.tau.isApprox(G.transpose() * data_full.tau));
+    BOOST_CHECK(data_mimic.dtau_dq.isApprox(G.transpose() * data_full.dtau_dq * G));
+    BOOST_CHECK(data_mimic.dtau_dv.isApprox(G.transpose() * data_full.dtau_dv * G));
+    BOOST_CHECK(data_mimic.M.isApprox(G.transpose() * data_full.M * G));
+  }
+}
+
+BOOST_AUTO_TEST_CASE(test_rnea_derivatives_mimic_fd)
+{
+  using namespace Eigen;
+  using namespace pinocchio;
+
+  const double alpha = 1e-8;
+
+  for (int i = 0; i < MimicTestCases::N_CASES; i++)
+  {
+    const MimicTestCases test_case(i);
+    const Model & model = test_case.model_mimic;
+    const Eigen::DenseIndex nv = model.nv;
+
+    const VectorXd q = randomConfiguration(model);
+    const VectorXd v = VectorXd::Random(nv);
+    const VectorXd a = VectorXd::Random(nv);
+
+    Data data(model);
+    computeRNEADerivatives(model, data, q, v, a);
+
+    Data data_fd(model), data_ref(model);
+    const VectorXd tau0 = rnea(model, data_ref, q, v, a);
+    BOOST_CHECK(data.tau.isApprox(tau0));
+
+    MatrixXd dtau_dq_fd(nv, nv);
+    VectorXd dq(VectorXd::Zero(nv));
+    for (Eigen::DenseIndex k = 0; k < nv; ++k)
+    {
+      dq[k] = alpha;
+      const VectorXd q_plus = integrate(model, q, dq);
+      dtau_dq_fd.col(k) = (rnea(model, data_fd, q_plus, v, a) - tau0) / alpha;
+      dq[k] = 0.;
+    }
+    BOOST_CHECK(data.dtau_dq.isApprox(dtau_dq_fd, sqrt(alpha)));
+
+    MatrixXd dtau_dv_fd(nv, nv);
+    VectorXd v_plus(v);
+    for (Eigen::DenseIndex k = 0; k < nv; ++k)
+    {
+      v_plus[k] += alpha;
+      dtau_dv_fd.col(k) = (rnea(model, data_fd, q, v_plus, a) - tau0) / alpha;
+      v_plus[k] = v[k];
+    }
+    BOOST_CHECK(data.dtau_dv.isApprox(dtau_dv_fd, sqrt(alpha)));
+
+    MatrixXd dtau_da_fd(nv, nv);
+    VectorXd a_plus(a);
+    for (Eigen::DenseIndex k = 0; k < nv; ++k)
+    {
+      a_plus[k] += alpha;
+      dtau_da_fd.col(k) = (rnea(model, data_fd, q, v, a_plus) - tau0) / alpha;
+      a_plus[k] = a[k];
+    }
+    BOOST_CHECK(data.M.isApprox(dtau_da_fd, sqrt(alpha)));
+  }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
